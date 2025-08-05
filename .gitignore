@@ -41,6 +41,11 @@ Thumbs.db
 # Environment variables
 .env
 
+# Account files with private keys
+deployment_account.json
+deployment_info.json
+*.json
+
 # Windows crash dumps
 *.stackdump
 bash.exe.stackdump
