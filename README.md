@@ -1,12 +1,12 @@
-# Song Registry DApp
+# Song Registry DApp - Algorand
 
-A simple Flask web application that connects to an Ethereum smart contract for registering and viewing songs on the blockchain.
+A Flask web application that connects to an Algorand smart contract for registering and viewing songs on the blockchain.
 
 ## Quick Start
 
 ### Prerequisites
 - Python 3.7+
-- Node.js and npm
+- Pera Wallet (for TestNet ALGO)
 
 ### Setup
 
@@ -14,27 +14,20 @@ A simple Flask web application that connects to an Ethereum smart contract for r
 ```bash
 git clone https://github.com/edzaniBruce51/song-registry-smart-contract.git
 cd song-registry-smart-contract
-npm install -g truffle ganache-cli
 pip install -r requirements.txt
 ```
 
-2. **Start local blockchain:**
+2. **Deploy smart contract:**
 ```bash
-ganache-cli --host 127.0.0.1 --port 7545 --networkId 5777 --accounts 10 --defaultBalanceEther 100
+python song_registry_contract.py  # Compile contract
+python deploy_contract.py         # Deploy to TestNet
 ```
 
-3. **Deploy smart contract:**
-```bash
-cd song-registry-contracts
-truffle migrate --reset --network development
-```
+3. **Configure environment:**
+   - Copy your 24-word mnemonic from Pera Wallet
+   - Add it to `.env` file as `ALGOWALLET_MNEMONIC`
 
-4. **Update configuration:**
-   - Copy the contract address from deployment output
-   - Copy the first account address from Ganache CLI
-   - Update both addresses in `app.py` (lines 12 and 47)
-
-5. **Run the app:**
+4. **Run the app:**
 ```bash
 python app.py
 ```
@@ -43,12 +36,21 @@ Visit `http://127.0.0.1:5000` to use the DApp.
 
 ## Features
 
-- Register songs with title, URL, and price
+- Register songs with title, URL, and price on Algorand
 - View all registered songs from the blockchain
-- Simple web interface for blockchain interaction
+- Simple web interface for Algorand interaction
+- Runs on Algorand TestNet
 
 ## Tech Stack
 
 - **Frontend:** Flask, HTML, CSS
-- **Blockchain:** Solidity, Truffle, Ganache CLI
-- **Integration:** Web3.py
+- **Blockchain:** Algorand, PyTeal, TEAL
+- **Integration:** Algorand Python SDK
+- **Wallet:** Pera Wallet
+
+## Algorand Integration
+
+- Smart contract written in PyTeal
+- Deployed on Algorand TestNet
+- Uses global state for song storage
+- Connected via Algorand Python SDK

@@ -1,148 +1,153 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
-from web3 import Web3
+from flask import Flask, render_template, request, redirect, flash
+from algosdk import mnemonic, account, encoding
+from algosdk.v2client import algod
+from algosdk.transaction import ApplicationNoOpTxn, OnComplete, wait_for_confirmation
 import json
+import base64
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Change this in production
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'fallback-secret-for-dev-only')  # For flash messages
 
-# Connect to local blockchain (Ganache) - will fail in production
-try:
-    w3 = Web3(Web3.HTTPProvider('http://127.0.0.1:7545'))
-    # Test connection
-    w3.eth.get_block_number()
-    BLOCKCHAIN_CONNECTED = True
-except:
-    w3 = None
-    BLOCKCHAIN_CONNECTED = False
+ALGOD_ADDRESS = "https://testnet-api.algonode.cloud"
+ALGOD_TOKEN = ""  # No token needed for Algonode
 
-# Contract details - you'll need to update these after deploying
-CONTRACT_ADDRESS = Web3.to_checksum_address('0xc2E99d100a0741456B676230Ea5E6d251C728c3d')  # New working contract address
-CONTRACT_ABI = [
-    {
-        "inputs": [
-            {"internalType": "string", "name": "_title", "type": "string"},
-            {"internalType": "string", "name": "_url", "type": "string"},
-            {"internalType": "uint256", "name": "_price", "type": "uint256"}
-        ],
-        "name": "registerSong",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [],
-        "name": "getNumberOfSongs",
-        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-        "stateMutability": "view",
-        "type": "function"
-    },
-    {
-        "inputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-        "name": "songs",
-        "outputs": [
-            {"internalType": "string", "name": "title", "type": "string"},
-            {"internalType": "address", "name": "owner", "type": "address"},
-            {"internalType": "string", "name": "url", "type": "string"},
-            {"internalType": "uint256", "name": "price", "type": "uint256"}
-        ],
-        "stateMutability": "view",
-        "type": "function"
-    }
-]
+# Load client
+algod_client = algod.AlgodClient(ALGOD_TOKEN, ALGOD_ADDRESS)
 
-# Default account (first account from Ganache CLI)
-DEFAULT_ACCOUNT = Web3.to_checksum_address('0x589dAbC24C0d94EF42264fdDCB326bf2510b3B57')
+# Load deployed app ID
+with open("deployment_info.json") as f:
+    deployment = json.load(f)
+APP_ID = deployment["app_id"]
 
-@app.route('/')
+# Load your 24-word mnemonic from .env
+mnemonic_phrase = os.getenv("ALGOWALLET_MNEMONIC")
+private_key = mnemonic.to_private_key(mnemonic_phrase)
+sender_address = account.address_from_private_key(private_key)
+
+
+@app.route("/")
 def index():
-    """Display all songs from the smart contract"""
-    if not BLOCKCHAIN_CONNECTED:
-        # Demo data for when blockchain is not available
-        demo_songs = [
-            {
-                'id': 0,
-                'title': 'Demo Song 1',
-                'owner': '0x1234567890abcdef...',
-                'url': 'https://example.com/song1.mp3',
-                'price': '0.01'
-            },
-            {
-                'id': 1,
-                'title': 'Demo Song 2',
-                'owner': '0xabcdef1234567890...',
-                'url': 'https://example.com/song2.mp3',
-                'price': '0.05'
-            }
-        ]
-        flash('Demo mode: Blockchain not connected. Showing sample data.', 'info')
-        return render_template('index.html', songs=demo_songs)
-
+    """View all registered songs"""
     try:
-        # Create contract instance
-        contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=CONTRACT_ABI)
-
-        # Get number of songs
-        num_songs = contract.functions.getNumberOfSongs().call()
-
-        # Get all songs
-        songs = []
-        for i in range(num_songs):
-            song_data = contract.functions.songs(i).call()
-            songs.append({
-                'id': i,
-                'title': song_data[0],
-                'owner': song_data[1],
-                'url': song_data[2],
-                'price': w3.from_wei(song_data[3], 'ether')  # Convert from wei to ether
-            })
-
-        return render_template('index.html', songs=songs)
-
+        app_info = algod_client.application_info(APP_ID)
+        app_state = app_info['params'].get('global-state', [])
     except Exception as e:
-        flash(f'Error connecting to blockchain: {str(e)}', 'error')
-        return render_template('index.html', songs=[])
-
-@app.route('/add_song', methods=['GET', 'POST'])
-def add_song():
-    """Add a new song to the registry"""
-    if request.method == 'POST':
-        title = request.form['title']
-        url = request.form['url']
-        price_ether = float(request.form['price'])
-
-        if not BLOCKCHAIN_CONNECTED:
-            flash(f'Demo mode: Song "{title}" would be registered for {price_ether} ETH', 'success')
-            flash('Note: Blockchain not connected. This is a demo of the interface.', 'info')
-            return redirect(url_for('index'))
-
+        flash(f"Error getting app info: {e}", "error")
+        return render_template("index.html", songs=[])
+    
+    songs = []
+    song_count = 0
+    
+    # Get song count
+    for entry in app_state:
         try:
-            # Convert price to wei
-            price_wei = w3.to_wei(price_ether, 'ether')
-
-            # Create contract instance
-            contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=CONTRACT_ABI)
-
-            # Build transaction
-            transaction = contract.functions.registerSong(title, url, price_wei).build_transaction({
-                'from': DEFAULT_ACCOUNT,
-                'gas': 2000000,
-                'gasPrice': w3.to_wei('20', 'gwei'),
-                'nonce': w3.eth.get_transaction_count(DEFAULT_ACCOUNT)
-            })
-
-            # Note: In a real app, you'd sign this transaction with a private key
-            # For this demo, we'll show how the transaction would be built
-            flash(f'Transaction built successfully! Title: {title}, Price: {price_ether} ETH', 'success')
-            flash('Note: In a real app, this transaction would be signed and sent to the blockchain', 'info')
-
-            return redirect(url_for('index'))
-
+            key = base64.b64decode(entry['key']).decode('utf-8', errors='ignore')
+            if key == "song_count":
+                song_count = entry['value']['uint']
+                break
+        except:
+            continue
+    
+    # Parse songs using binary key analysis
+    song_data = {}
+    
+    for entry in app_state:
+        try:
+            key_bytes = base64.b64decode(entry['key'])
+            
+            # Check if it's a song key (starts with "song_")
+            if key_bytes.startswith(b'song_') and len(key_bytes) > 5:
+                # Extract the parts: song_ + 8-byte-id + _ + field
+                remaining = key_bytes[5:]  # Remove "song_" prefix
+                
+                # Find the last underscore (separates ID from field)
+                last_underscore = remaining.rfind(b'_')
+                if last_underscore > 0:
+                    id_bytes = remaining[:last_underscore]
+                    field_bytes = remaining[last_underscore + 1:]
+                    
+                    # Convert 8-byte ID to integer
+                    if len(id_bytes) == 8:
+                        song_id = int.from_bytes(id_bytes, 'big')
+                        field = field_bytes.decode('utf-8', errors='ignore')
+                        
+                        # Get the value
+                        if entry['value']['type'] == 1:  # bytes
+                            raw_value = base64.b64decode(entry['value']['bytes'])
+                            
+                            # Special handling for owner field (convert to Algorand address)
+                            if field == 'owner' and len(raw_value) == 32:
+                                try:
+                                    value = encoding.encode_address(raw_value)
+                                except:
+                                    value = raw_value.decode('utf-8', errors='ignore')
+                            else:
+                                value = raw_value.decode('utf-8', errors='ignore')
+                        else:  # uint
+                            value = entry['value']['uint']
+                        
+                        # Store in our data structure
+                        if song_id not in song_data:
+                            song_data[song_id] = {}
+                        song_data[song_id][field] = value
+                        
         except Exception as e:
-            flash(f'Error adding song: {str(e)}', 'error')
+            continue
+    
+    # Build songs list from parsed data
+    for song_id in sorted(song_data.keys()):
+        song_info = song_data[song_id]
+        if 'title' in song_info and 'url' in song_info:
+            song = {
+                'id': song_id,
+                'title': song_info.get('title', 'Unknown'),
+                'url': song_info.get('url', ''),
+                'price': song_info.get('price', 0),
+                'owner': song_info.get('owner', 'Unknown')
+            }
+            songs.append(song)
+    
+    return render_template("index.html", songs=songs)
 
-    return render_template('add_song.html')
 
-if __name__ == '__main__':
-    import os
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+@app.route("/register_song", methods=["POST"])
+def register_song():
+    try:
+        title = request.form.get("title")
+        url = request.form.get("url")
+        price = int(request.form.get("price"))
+
+        # App call with arguments
+        app_args = [
+            b"register_song",
+            title.encode("utf-8"),
+            url.encode("utf-8"),
+            price.to_bytes(8, "big")
+        ]
+
+        params = algod_client.suggested_params()
+        txn = ApplicationNoOpTxn(
+            sender=sender_address,
+            sp=params,
+            index=APP_ID,
+            app_args=app_args
+        )
+
+        signed_txn = txn.sign(private_key)
+        tx_id = algod_client.send_transaction(signed_txn)
+        confirmed_txn = wait_for_confirmation(algod_client, tx_id, 4)
+        
+        flash("Song registered successfully!", "success")
+        
+    except Exception as e:
+        flash(f"Error registering song: {e}", "error")
+
+    return redirect("/")
+
+
+if __name__ == "__main__":
+    app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

@@ -25,10 +25,6 @@ venv/
 env/
 ENV/
 
-# Truffle
-thirdProject/build/
-node_modules/
-
 # IDE
 .vscode/
 .idea/
@@ -48,3 +44,11 @@ Thumbs.db
 # Windows crash dumps
 *.stackdump
 bash.exe.stackdump
+
+# Algorand specific
+deployment_info.json
+*.teal
+sandbox/data/
+sandbox/.active_config
+sandbox/.clean
+sandbox/sandbox.log
